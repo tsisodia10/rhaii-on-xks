@@ -15,7 +15,7 @@ A CLI application for running validation checks against Kubernetes clusters in t
 | Cloud provider | Managed K8s Service |
 | -------------- | ------------------- |
 | [Azure](https://azure.microsoft.com) | [AKS](https://azure.microsoft.com/en-us/products/kubernetes-service) |
-<!-- | [CoreWeave](https://coreweave.com)   | [CKS](https://coreweave.com/products/coreweave-kubernetes-service) | (coming soon) -->
+| [CoreWeave](https://coreweave.com)   | [CKS](https://coreweave.com/products/coreweave-kubernetes-service)   |
 
 
 ## Container image build
@@ -44,9 +44,10 @@ After building the container image as described above, a helper script to run th
 # run all tests
 make run
 
-# run specific test suite (cluster or operators)
+# run specific test suite (cluster, operators, or rhcl)
 SUITE=cluster make run
 SUITE=operators make run
+SUITE=rhcl make run
 
 # if the image name and tag have been customized
 CONTAINER_REPO=quay.io/myusername/llm-d-xks-preflight CONTAINER_TAG=mytag make run
@@ -81,6 +82,18 @@ Suite: operators -- Operator readiness tests
 | `crd_kserve`       | The tool checks if kserve CRDs are present on the cluster |
 | `operator_kserve`  | Check if kserve-controller-manager deployment is ready |
 
+Suite: rhcl -- RHCL (Red Hat Connectivity Link) readiness tests (optional)
+
+| Test name | Meaning |
+| --------- | ------- |
+| `crd_kuadrant` | Check if Kuadrant/RHCL CRDs are present (authpolicies, ratelimitpolicies, etc.) |
+| `operator_kuadrant` | Check if Kuadrant operator is running in kuadrant-operators namespace |
+| `operator_authorino` | Check if Authorino operator is running |
+| `operator_limitador` | Check if Limitador operator is running |
+| `instance_kuadrant` | Check if Kuadrant instance is Ready in kuadrant-system namespace |
+
+> **Note:** All RHCL tests are marked optional since RHCL is an optional component. Run with `--suite rhcl` or as part of `--suite all`.
+
 At the end, a brief report is printed with `PASSED` or `FAILED` status for each of the above tests and the suggested action the user should follow.
 
  **Azure Supported Instance Types**:
@@ -90,6 +103,11 @@ At the end, a brief report is printed with `PASSED` or `FAILED` status for each 
 - `Standard_ND96isr_H100_v5` (NVIDIA H100)
 - `Standard_ND96isr_H200_v5` (NVIDIA H200)
 
+ **CoreWeave Supported Instance Types**:
+- `b200-8x` (B200 (InfiniBand))
+- `gd-8xh200ib-i128` (H200 (InfiniBand))
+- `gd-8xh100ib-i128` (H100 (InfiniBand))
+- `gd-8xa100-i128` (A100)
 
 ## Standalone script usage
 
@@ -101,9 +119,9 @@ Required dependencies:
 
 - `-l, --log-level`: Set the log level (choices: DEBUG, INFO, WARNING, ERROR, CRITICAL, default: INFO)
 - `-k, --kube-config`: Path to the kubeconfig file (overrides KUBECONFIG environment variable)
-- `-u, --cloud-provider`: Cloud provider to perform checks on (choices: auto, azure, default: auto)
+- `-u, --cloud-provider`: Cloud provider to perform checks on (choices: auto, azure, coreweave, default: auto)
 - `-c, --config`: Path to a custom config file
-- `-s, --suite`: Test suite to run (choices: all, cluster, operators, default: all)
+- `-s, --suite`: Test suite to run (choices: all, cluster, operators, rhcl, default: all)
 - `-h, --help`: Show help message
 
 ### Configuration File
@@ -128,6 +146,6 @@ cloud_provider = azure
 ### Environment Variables
 
 - `LLMD_XKS_LOG_LEVEL`: Log level (same choices as `--log-level`)
-- `LLMD_XKS_CLOUD_PROVIDER`: Cloud provider (choices: auto, azure)
-- `LLMD_XKS_SUITE`: Test suite to run (choices: all(default), cluster, operators)
+- `LLMD_XKS_CLOUD_PROVIDER`: Cloud provider (choices: auto, azure, coreweave)
+- `LLMD_XKS_SUITE`: Test suite to run (choices: all(default), cluster, operators, rhcl)
 - `KUBECONFIG`: Path to kubeconfig file (standard Kubernetes environment variable)
