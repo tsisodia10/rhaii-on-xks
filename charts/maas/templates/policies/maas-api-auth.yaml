@@ -1,0 +1,20 @@
+{{- if not .Values.azureAD.enabled }}
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: maas-api-allow
+  namespace: {{ include "maas.namespace" . }}
+  labels:
+    {{- include "maas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-auth
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: maas-api-route
+  rules:
+    authentication:
+      anonymous:
+        anonymous: {}
+    authorization: {}
+{{- end }}

@@ -1,0 +1,113 @@
+# MaaS (Models as a Service) - API gateway, auth, rate limiting, subscriptions
+#
+# Prerequisites:
+#   - KServe deployed (LLMInferenceService CRDs)
+#   - RHCL deployed (Kuadrant, Authorino, Limitador operators + instances)
+#   - Istio/Sail deployed (Gateway API)
+#   - cert-manager deployed (TLS)
+#
+# Usage:
+#   helmfile apply --selector name=maas
+
+releases:
+  - name: maas
+    chart: ./
+    namespace: {{ .Values.namespace | default "opendatahub" }}
+    createNamespace: true
+    wait: false
+    set:
+{{- if .Values.useSystemPodmanAuth }}
+      - name: pullSecret.dockerConfigJson
+        file: {{ env "HOME" }}/.config/containers/auth.json
+{{- else if .Values.pullSecretFile }}
+      - name: pullSecret.dockerConfigJson
+        file: {{ .Values.pullSecretFile }}
+{{- end }}
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: "sh"
+        args:
+          - "-c"
+          - |
+            set -e
+            echo "=== MaaS Pre-deploy checks ==="
+
+            # Verify KServe is deployed
+            if ! kubectl get crd llminferenceservices.serving.kserve.io >/dev/null 2>&1; then
+              echo "ERROR: KServe CRDs not found. Deploy KServe first."
+              exit 1
+            fi
+
+            # Verify RHCL/Kuadrant is deployed
+            if ! kubectl get crd authpolicies.kuadrant.io >/dev/null 2>&1; then
+              echo "ERROR: Kuadrant/RHCL CRDs not found. Deploy RHCL first (make deploy-rhcl)."
+              exit 1
+            fi
+
+            # Verify Gateway API CRDs
+            if ! kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1; then
+              echo "ERROR: Gateway API CRDs not found. Deploy Istio/Sail first."
+              exit 1
+            fi
+
+            # Verify Kuadrant instance is ready
+            if kubectl get kuadrant -n kuadrant-system >/dev/null 2>&1; then
+              echo "Kuadrant instance found in kuadrant-system"
+            else
+              echo "WARNING: No Kuadrant instance found. Auth and rate limiting policies may not be enforced."
+            fi
+
+            # Apply MaaS CRDs via server-side apply (avoids size limits)
+            echo "Applying MaaS CRDs..."
+            kubectl apply -f ./crds/ --server-side
+            echo "=== MaaS pre-deploy checks passed ==="
+
+      - events: ["postsync"]
+        showlogs: true
+        command: "sh"
+        args:
+          - "-c"
+          - |
+            set -e
+            NAMESPACE="{{ .Values.namespace | default "opendatahub" }}"
+            echo "=== MaaS Post-deploy validation ==="
+
+            echo "Waiting for PostgreSQL..."
+            kubectl rollout status deployment/postgres -n "$NAMESPACE" --timeout=120s 2>/dev/null || echo "PostgreSQL not ready"
+
+            echo "Waiting for maas-controller..."
+            kubectl rollout status deployment/maas-controller -n "$NAMESPACE" --timeout=120s 2>/dev/null || echo "maas-controller not ready"
+
+            echo "Waiting for maas-api..."
+            kubectl rollout status deployment/maas-api -n "$NAMESPACE" --timeout=120s 2>/dev/null || echo "maas-api not ready"
+
+            GATEWAY_NS="{{ .Values.gatewayNamespace | default "istio-system" }}"
+            echo "Checking MaaS gateway..."
+            kubectl get gateway maas-default-gateway -n "$GATEWAY_NS" 2>/dev/null || echo "Gateway not found in $GATEWAY_NS"
+
+            # Patch gateway service account with pull secret (Istio creates the SA
+            # but doesn't add imagePullSecrets for registry.redhat.io images)
+            GATEWAY_SA="maas-default-gateway-istio"
+            echo "Patching gateway service account with pull secret..."
+            for i in 1 2 3 4 5; do
+              if kubectl get sa "$GATEWAY_SA" -n "$GATEWAY_NS" >/dev/null 2>&1; then
+                kubectl patch sa "$GATEWAY_SA" -n "$GATEWAY_NS" \
+                  -p '{"imagePullSecrets": [{"name": "redhat-pull-secret"}]}' 2>/dev/null && \
+                  echo "  Gateway SA patched" && break
+              fi
+              echo "  Waiting for gateway SA... ($i/5)"
+              sleep 5
+            done
+            # Restart gateway pod to pick up the pull secret
+            kubectl delete pod -n "$GATEWAY_NS" -l istio.io/gateway-name=maas-default-gateway --ignore-not-found 2>/dev/null || true
+
+            echo ""
+            echo "=== MaaS deployment status ==="
+            echo "maas-controller:"
+            kubectl get pods -n "$NAMESPACE" -l control-plane=maas-controller 2>/dev/null || echo "  Not found"
+            echo "maas-api:"
+            kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/name=maas-api 2>/dev/null || echo "  Not found"
+            echo "postgresql:"
+            kubectl get pods -n "$NAMESPACE" -l app=postgres 2>/dev/null || echo "  Not found"
+            echo "=== MaaS post-deploy validation complete ==="
