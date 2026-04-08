@@ -59,20 +59,26 @@ deploy: check-kubeconfig clear-cache
 RHCL_TARGET := $(if $(filter true,$(RHCL)),deploy-rhcl,)
 MAAS_TARGET := $(if $(filter true,$(MAAS)),deploy-maas,)
 
+# MaaS requires RHCL — fail early if MAAS=true without RHCL=true
+$(if $(and $(filter true,$(MAAS)),$(filter-out true,$(RHCL))),$(error MAAS=true requires RHCL=true. Run: make deploy-all RHCL=true MAAS=true))
+
 deploy-all: check-kubeconfig deploy-cert-manager deploy-istio deploy-lws $(RHCL_TARGET) deploy-kserve $(MAAS_TARGET)
 	@$(MAKE) status
 
 deploy-cert-manager: check-kubeconfig clear-cache
-	@# Detect orphaned cert-manager pods not managed by Helm
+	@# Detect orphaned cert-manager pods not managed by our Helm release
 	@if kubectl get pods -n cert-manager --no-headers 2>/dev/null | grep -q .; then \
 		if ! helm list -n cert-manager-operator 2>/dev/null | grep -q cert-manager; then \
-			echo "WARNING: cert-manager pods exist but no Helm release found."; \
-			echo "  This is likely an orphaned install. Cleaning up..."; \
-			kubectl delete deployment --all -n cert-manager --ignore-not-found 2>/dev/null || true; \
-			kubectl get clusterrole,clusterrolebinding -o name 2>/dev/null \
-				| grep -i cert-manager | xargs -r kubectl delete --ignore-not-found 2>/dev/null || true; \
-			kubectl delete sa --all -n cert-manager --ignore-not-found 2>/dev/null || true; \
-			echo "  Orphaned resources cleaned. Proceeding with fresh deploy."; \
+			echo "WARNING: cert-manager pods exist in cert-manager namespace but no Helm release found in cert-manager-operator namespace."; \
+			echo "  If this is managed by another tool (OLM, GitOps), skip cleanup with: CERT_MANAGER_FORCE_CLEANUP=false"; \
+			if [ "$${CERT_MANAGER_FORCE_CLEANUP:-true}" = "true" ]; then \
+				echo "  Cleaning orphaned resources..."; \
+				kubectl delete deployment --all -n cert-manager --ignore-not-found 2>/dev/null || true; \
+				kubectl delete sa --all -n cert-manager --ignore-not-found 2>/dev/null || true; \
+				echo "  Done. Proceeding with fresh deploy."; \
+			else \
+				echo "  Skipping cleanup (CERT_MANAGER_FORCE_CLEANUP=false)."; \
+			fi; \
 		fi; \
 	fi
 	helmfile apply --selector name=cert-manager-operator
@@ -197,8 +203,8 @@ status: check-kubeconfig
 	fi
 	@echo ""
 	@echo "maas (optional):"
-	@kubectl get pods -n $(KSERVE_NAMESPACE) -l control-plane=maas-controller 2>/dev/null || echo "  Not deployed (optional component)"
-	@kubectl get pods -n $(KSERVE_NAMESPACE) -l app.kubernetes.io/name=maas-api 2>/dev/null || echo "  "
+	@kubectl get pods -n "$(KSERVE_NAMESPACE)" -l control-plane=maas-controller 2>/dev/null || echo "  Not deployed (optional component)"
+	@kubectl get pods -n "$(KSERVE_NAMESPACE)" -l app.kubernetes.io/name=maas-api 2>/dev/null || echo "  "
 	@if kubectl get crd maassubscriptions.maas.opendatahub.io >/dev/null 2>&1; then \
 		echo ""; \
 		echo "maas gateway:"; \

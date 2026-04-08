@@ -51,11 +51,13 @@ releases:
               exit 1
             fi
 
-            # Verify Kuadrant instance is ready
-            if kubectl get kuadrant -n kuadrant-system >/dev/null 2>&1; then
+            # Verify Kuadrant instance exists and is ready
+            KUADRANT_COUNT=$(kubectl get kuadrant -n kuadrant-system --no-headers 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$KUADRANT_COUNT" -gt 0 ]; then
               echo "Kuadrant instance found in kuadrant-system"
             else
-              echo "WARNING: No Kuadrant instance found. Auth and rate limiting policies may not be enforced."
+              echo "ERROR: No Kuadrant instance found in kuadrant-system. Auth and rate limiting policies will not be enforced."
+              exit 1
             fi
 
             # Apply MaaS CRDs via server-side apply (avoids size limits)
@@ -103,7 +105,8 @@ releases:
             kubectl delete pod -n "$GATEWAY_NS" -l "istio.io/gateway-name=$GATEWAY_NAME" --ignore-not-found 2>/dev/null || true
 
             if [ "$ERRORS" -gt 0 ]; then
-              echo "WARNING: $ERRORS component(s) not ready. Check pod status."
+              echo "ERROR: $ERRORS component(s) not ready. Check pod status."
+              exit 1
             fi
 
             echo ""

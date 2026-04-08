@@ -8,7 +8,7 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: ["secrets"]
-  verbs: ["get", "list", "watch"]
+  verbs: ["get"]
 - apiGroups: ["maas.opendatahub.io"]
   resources: ["externalmodels", "maasauthpolicies", "maasmodelrefs", "maassubscriptions"]
   verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
