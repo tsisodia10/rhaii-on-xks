@@ -60,11 +60,11 @@ helmfile destroy 2>/dev/null || true
 
 # Remove finalizers from stuck resources
 log "Removing finalizers from stuck resources..."
-kubectl get istiorevision -A -o name 2>/dev/null | while read rev; do
-    kubectl patch $rev -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+kubectl get istiorevision -A -o name 2>/dev/null | while read -r rev; do
+    kubectl patch "$rev" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
 done
-kubectl get istio -A -o name 2>/dev/null | while read ist; do
-    kubectl patch $ist -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+kubectl get istio -A -o name 2>/dev/null | while read -r ist; do
+    kubectl patch "$ist" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
 done
 kubectl patch infrastructure cluster -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
 kubectl patch certmanager cluster -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true

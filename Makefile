@@ -1,6 +1,6 @@
 .PHONY: deploy deploy-all undeploy undeploy-kserve status help check-kubeconfig sync clear-cache
 .PHONY: deploy-cert-manager deploy-istio deploy-lws deploy-rhcl deploy-kserve deploy-opendatahub-prerequisites deploy-cert-manager-pki
-.PHONY: undeploy-rhcl deploy-maas undeploy-maas test conformance deploy-mock-model clean-mock-model
+.PHONY: undeploy-rhcl deploy-maas undeploy-maas test conformance deploy-mock-model clean-mock-model lint
 
 HELMFILE_CACHE := $(HOME)/.cache/helmfile
 # Auto-detect KServe namespace: redhat-ods-applications (EA2) or opendatahub (EA1)
@@ -35,6 +35,7 @@ help:
 	@echo ""
 	@echo "Other:"
 	@echo "  make status              - Show deployment status"
+	@echo "  make lint                - Run local lints (helm lint, yamllint, shellcheck)"
 	@echo "  make test                - Run ODH conformance tests"
 	@echo "  make sync                - Fetch latest from git repos"
 	@echo "  make clear-cache         - Clear helmfile git cache"
@@ -272,3 +273,31 @@ clean-mock-model: check-kubeconfig
 	-kubectl delete clusterstoragecontainer local-noop --ignore-not-found 2>/dev/null || true
 	-kubectl delete namespace "$(MOCK_NAMESPACE)" --ignore-not-found
 	@echo "=== Done ==="
+
+# Lint — run locally before pushing to catch issues CodeRabbit would flag
+lint:
+	@echo "=== Running local lints ==="
+	@FAIL=0; \
+	echo "--- helm lint ---"; \
+	for chart in charts/*/; do \
+		if [ -f "$$chart/Chart.yaml" ]; then \
+			helm lint "$$chart" 2>&1 || FAIL=1; \
+		fi; \
+	done; \
+	echo ""; \
+	echo "--- yamllint ---"; \
+	if command -v yamllint >/dev/null 2>&1; then \
+		yamllint -d '{extends: relaxed, rules: {line-length: {max: 200}}}' values.yaml charts/*/values.yaml 2>&1 || FAIL=1; \
+	else \
+		echo "  yamllint not found (brew install yamllint)"; \
+	fi; \
+	echo ""; \
+	echo "--- shellcheck ---"; \
+	if command -v shellcheck >/dev/null 2>&1; then \
+		shellcheck -x scripts/*.sh test/*.sh 2>&1 || FAIL=1; \
+	else \
+		echo "  shellcheck not found (brew install shellcheck)"; \
+	fi; \
+	echo ""; \
+	echo "=== Lint complete ==="; \
+	exit $$FAIL

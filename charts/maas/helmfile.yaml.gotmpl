@@ -73,22 +73,23 @@ releases:
             NAMESPACE="{{ .Values.namespace | default "opendatahub" }}"
             echo "=== MaaS Post-deploy validation ==="
 
+            ERRORS=0
+
             echo "Waiting for PostgreSQL..."
-            kubectl rollout status deployment/postgres -n "$NAMESPACE" --timeout=120s 2>/dev/null || echo "PostgreSQL not ready"
+            kubectl rollout status deployment/postgres -n "$NAMESPACE" --timeout=120s 2>/dev/null || { echo "ERROR: PostgreSQL not ready"; ERRORS=$((ERRORS+1)); }
 
             echo "Waiting for maas-controller..."
-            kubectl rollout status deployment/maas-controller -n "$NAMESPACE" --timeout=120s 2>/dev/null || echo "maas-controller not ready"
+            kubectl rollout status deployment/maas-controller -n "$NAMESPACE" --timeout=120s 2>/dev/null || { echo "ERROR: maas-controller not ready"; ERRORS=$((ERRORS+1)); }
 
             echo "Waiting for maas-api..."
-            kubectl rollout status deployment/maas-api -n "$NAMESPACE" --timeout=120s 2>/dev/null || echo "maas-api not ready"
+            kubectl rollout status deployment/maas-api -n "$NAMESPACE" --timeout=120s 2>/dev/null || { echo "ERROR: maas-api not ready"; ERRORS=$((ERRORS+1)); }
 
             GATEWAY_NS="{{ .Values.gatewayNamespace | default "istio-system" }}"
+            GATEWAY_NAME="{{ .Values.gateway.name | default "maas-default-gateway" }}"
             echo "Checking MaaS gateway..."
-            kubectl get gateway maas-default-gateway -n "$GATEWAY_NS" 2>/dev/null || echo "Gateway not found in $GATEWAY_NS"
+            kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NS" 2>/dev/null || echo "Gateway not found in $GATEWAY_NS"
 
-            # Patch gateway service account with pull secret (Istio creates the SA
-            # but doesn't add imagePullSecrets for registry.redhat.io images)
-            GATEWAY_SA="maas-default-gateway-istio"
+            GATEWAY_SA="${GATEWAY_NAME}-istio"
             echo "Patching gateway service account with pull secret..."
             for i in 1 2 3 4 5; do
               if kubectl get sa "$GATEWAY_SA" -n "$GATEWAY_NS" >/dev/null 2>&1; then
@@ -99,8 +100,11 @@ releases:
               echo "  Waiting for gateway SA... ($i/5)"
               sleep 5
             done
-            # Restart gateway pod to pick up the pull secret
-            kubectl delete pod -n "$GATEWAY_NS" -l istio.io/gateway-name=maas-default-gateway --ignore-not-found 2>/dev/null || true
+            kubectl delete pod -n "$GATEWAY_NS" -l "istio.io/gateway-name=$GATEWAY_NAME" --ignore-not-found 2>/dev/null || true
+
+            if [ "$ERRORS" -gt 0 ]; then
+              echo "WARNING: $ERRORS component(s) not ready. Check pod status."
+            fi
 
             echo ""
             echo "=== MaaS deployment status ==="

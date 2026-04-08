@@ -6,6 +6,9 @@ metadata:
     {{- include "maas.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
 rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
 - apiGroups: ["maas.opendatahub.io"]
   resources: ["externalmodels", "maasauthpolicies", "maasmodelrefs", "maassubscriptions"]
   verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
