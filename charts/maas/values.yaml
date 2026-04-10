@@ -41,10 +41,10 @@ keycloak:
     repository: quay.io/keycloak/keycloak
     tag: "24.0"
   adminUser: admin
-  adminPassword: admin
+  adminPassword: ""     # Auto-generated if empty, persisted in keycloak-admin Secret
   issuerUrl: ""        # Auto-computed when deploy=true; set manually for external Keycloak
   clientId: maas-gateway
-  clientSecret: maas-gateway-secret
+  clientSecret: ""              # Auto-generated if empty, persisted in keycloak-client-secret Secret
   realm: maas
   # Default groups (must match tierMapping.tiers[].groups)
   groups:
@@ -77,8 +77,13 @@ gateway:
     http:
       port: 80
     https:
-      enabled: false
+      enabled: false       # Enable to add TLS listener with cert-manager Certificate
       port: 443
+  tls:
+    issuerRef:
+      name: opendatahub-ca-issuer   # cert-manager ClusterIssuer or Issuer name
+      kind: ClusterIssuer
+    dnsNames: []           # DNS SANs for the TLS cert (e.g. ["maas.example.com"])
 
 # PostgreSQL for API key and subscription storage
 postgresql:
@@ -92,7 +97,7 @@ postgresql:
     password: ""         # Set via --set or external secret. Auto-generated if empty.
     existingSecret: ""   # Use an existing Secret instead of creating one (key: POSTGRESQL_PASSWORD)
   storage:
-    type: emptyDir       # emptyDir (dev) or persistentVolumeClaim (production)
+    type: persistentVolumeClaim   # persistentVolumeClaim (default) or emptyDir (dev/testing)
     pvc:
       size: 1Gi
       storageClassName: ""  # Uses cluster default if empty
@@ -103,6 +108,16 @@ postgresql:
     limits:
       memory: "512Mi"
       cpu: "500m"
+
+# Rate limiting (requires RHCL / Kuadrant operator)
+rateLimiting:
+  enabled: false         # Enable to create a RateLimitPolicy on the MaaS API routes
+  global:
+    limit: 100           # Max requests per window across all users
+    window: 10s
+  perUser:
+    limit: 20            # Max requests per window per user
+    window: 10s
 
 # Tier-to-group mapping (must match upstream format — groups field is required)
 tierMapping:

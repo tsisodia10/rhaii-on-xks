@@ -95,14 +95,17 @@ charts/maas/
     ├── postgresql/
     │   ├── deployment.yaml             # PostgreSQL Deployment
     │   └── secret.yaml                 # DB connection URL secret
+    ├── certificate.yaml                 # cert-manager Certificate (when HTTPS enabled)
     ├── keycloak/
     │   ├── namespace.yaml              # keycloak namespace (with lookup guard)
-    │   ├── deployment.yaml             # Keycloak with --import-realm
+    │   ├── deployment.yaml             # Keycloak prod mode + PVC
     │   ├── service.yaml                # ClusterIP on port 8080
+    │   ├── secret.yaml                 # Admin + client credentials (auto-generated)
     │   └── realm-configmap.yaml        # Pre-configured realm JSON (auto-import)
     └── policies/
         ├── default-auth.yaml           # Gateway-level deny-all default
-        └── maas-api-auth-policy.yaml   # Per-route AuthPolicy (API key + JWT)
+        ├── maas-api-auth-policy.yaml   # Per-route AuthPolicy (API key + JWT)
+        └── maas-api-rate-limit.yaml    # RateLimitPolicy (when rateLimiting.enabled)
 ```
 
 ## Deployment Options
@@ -334,6 +337,10 @@ HTTP 200
 | RBAC | Managed by OpenShift AI operator | Full ClusterRole matching upstream |
 | Pull secret conflicts | Single operator manages namespace | `lookup` guard prevents Helm ownership conflicts |
 | Identity provider setup | Built into OpenShift | Keycloak auto-deployed and configured by the chart |
+| Data persistence | Operator-managed PVCs | PostgreSQL + Keycloak default to PVC-backed storage |
+| Credential management | Operator-managed | Auto-generated secrets with `helm.sh/resource-policy: keep` |
+| TLS termination | OpenShift Routes handle TLS | Optional cert-manager Certificate + HTTPS listener |
+| Rate limiting | Platform-level controls | Configurable RateLimitPolicy via Kuadrant (global + per-user) |
 
 ## Gateway Routes
 

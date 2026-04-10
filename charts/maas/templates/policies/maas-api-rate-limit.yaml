@@ -1,0 +1,26 @@
+{{- if .Values.rateLimiting.enabled }}
+apiVersion: kuadrant.io/v1
+kind: RateLimitPolicy
+metadata:
+  name: maas-api-rate-limit
+  namespace: {{ include "maas.namespace" . }}
+  labels:
+    {{- include "maas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: policy
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: maas-api-route
+  limits:
+    global:
+      rates:
+        - limit: {{ .Values.rateLimiting.global.limit }}
+          window: {{ .Values.rateLimiting.global.window | quote }}
+    per-user:
+      counters:
+        - expression: request.headers['X-MaaS-Username'].size() > 0 ? request.headers['X-MaaS-Username'] : request.headers['X-Forwarded-For']
+      rates:
+        - limit: {{ .Values.rateLimiting.perUser.limit }}
+          window: {{ .Values.rateLimiting.perUser.window | quote }}
+{{- end }}

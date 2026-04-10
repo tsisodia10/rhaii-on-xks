@@ -1,0 +1,21 @@
+{{- if .Values.gateway.listeners.https.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: maas-gateway-tls
+  namespace: {{ include "maas.gateway.namespace" . }}
+  labels:
+    {{- include "maas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  secretName: maas-gateway-tls
+  issuerRef:
+    name: {{ .Values.gateway.tls.issuerRef.name | default "opendatahub-ca-issuer" }}
+    kind: {{ .Values.gateway.tls.issuerRef.kind | default "ClusterIssuer" }}
+  dnsNames:
+    {{- if .Values.gateway.tls.dnsNames }}
+    {{- toYaml .Values.gateway.tls.dnsNames | nindent 4 }}
+    {{- else }}
+    - "*.maas.local"
+    {{- end }}
+{{- end }}

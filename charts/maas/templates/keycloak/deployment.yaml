@@ -1,9 +1,25 @@
 {{- if .Values.keycloak.deploy }}
+{{- $kcNs := include "maas.keycloak.namespace" . }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: keycloak-data
+  namespace: {{ $kcNs }}
+  labels:
+    {{- include "maas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: keycloak
-  namespace: {{ include "maas.keycloak.namespace" . }}
+  namespace: {{ $kcNs }}
   labels:
     {{- include "maas.labels" . | nindent 4 }}
     app.kubernetes.io/component: keycloak
@@ -13,27 +29,49 @@ spec:
   selector:
     matchLabels:
       app: keycloak
+  strategy:
+    type: Recreate
   template:
     metadata:
       labels:
         app: keycloak
         {{- include "maas.labels" . | nindent 8 }}
     spec:
+      initContainers:
+      - name: copy-realm
+        image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
+        command: ["sh", "-c", "cp /realm-source/*.json /opt/keycloak/data/import/ 2>/dev/null || true"]
+        volumeMounts:
+        - name: realm-source
+          mountPath: /realm-source
+          readOnly: true
+        - name: keycloak-data
+          mountPath: /opt/keycloak/data
       containers:
       - name: keycloak
         image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
         args:
-          - start-dev
+          - start
           - --import-realm
+          - --hostname-strict=false
+          - --http-enabled=true
         env:
         - name: KEYCLOAK_ADMIN
-          value: {{ .Values.keycloak.adminUser | quote }}
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin
+              key: username
         - name: KEYCLOAK_ADMIN_PASSWORD
-          value: {{ .Values.keycloak.adminPassword | quote }}
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin
+              key: password
         - name: KC_HEALTH_ENABLED
           value: "true"
         - name: KC_HTTP_PORT
           value: "8080"
+        - name: KC_DB
+          value: "dev-file"
         ports:
         - containerPort: 8080
           name: http
@@ -60,11 +98,13 @@ spec:
             memory: "1Gi"
             cpu: "1000m"
         volumeMounts:
-        - name: realm-import
-          mountPath: /opt/keycloak/data/import
-          readOnly: true
+        - name: keycloak-data
+          mountPath: /opt/keycloak/data
       volumes:
-      - name: realm-import
+      - name: realm-source
         configMap:
           name: keycloak-realm-import
+      - name: keycloak-data
+        persistentVolumeClaim:
+          claimName: keycloak-data
 {{- end }}
