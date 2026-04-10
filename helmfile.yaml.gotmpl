@@ -81,6 +81,7 @@ helmfiles:
     values:
       - namespace: {{ .Values.maas.namespace | default "opendatahub" }}
       - gatewayNamespace: {{ .Values.maas.gatewayNamespace | default "istio-system" }}
+      - gatewayName: {{ .Values.maas.gatewayName | default "maas-default-gateway" }}
       - useSystemPodmanAuth: {{ .Values.useSystemPodmanAuth }}
       - pullSecretFile: {{ .Values.pullSecretFile | default "" | quote }}
 {{- end }}

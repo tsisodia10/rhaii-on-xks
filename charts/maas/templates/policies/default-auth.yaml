@@ -1,9 +1,12 @@
-{{- if and .Values.azureAD.enabled (not .Values.azureAD.tenantId) }}
-  {{- fail "azureAD.tenantId is required when azureAD.enabled is true" }}
-{{- end }}
-{{- if and .Values.azureAD.enabled (not .Values.azureAD.clientId) }}
-  {{- fail "azureAD.clientId is required when azureAD.enabled is true" }}
-{{- end }}
+{{/*
+  Gateway-level default deny AuthPolicy.
+
+  Routes WITHOUT a per-route AuthPolicy (i.e. models without a MaaSAuthPolicy)
+  get denied (403). Routes WITH a per-route AuthPolicy (created by the
+  MaaSAuthPolicy controller) override these defaults with model-specific rules.
+
+  Per-route AuthPolicies completely replace these defaults (atomic strategy).
+*/}}
 apiVersion: kuadrant.io/v1
 kind: AuthPolicy
 metadata:
@@ -19,17 +22,7 @@ spec:
     name: {{ include "maas.gateway.name" . }}
   defaults:
     rules:
-      authentication:
-{{- if .Values.azureAD.enabled }}
-        azure-ad:
-          jwt:
-            issuerUrl: https://login.microsoftonline.com/{{ .Values.azureAD.tenantId }}/v2.0
-            audiences:
-              - {{ .Values.azureAD.clientId }}
-{{- else }}
-        anonymous:
-          anonymous: {}
-{{- end }}
+      authentication: {}
       authorization:
         deny-unconfigured-models:
           metrics: false

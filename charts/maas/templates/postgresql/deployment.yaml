@@ -83,7 +83,7 @@ spec:
             command:
             - /bin/sh
             - -c
-            - pg_isready -U $(POSTGRESQL_USER) -d {{ .Values.postgresql.database }}
+            - pg_isready -U $POSTGRESQL_USER -d {{ .Values.postgresql.database }}
           initialDelaySeconds: 10
           periodSeconds: 5
         livenessProbe:
@@ -91,7 +91,7 @@ spec:
             command:
             - /bin/sh
             - -c
-            - pg_isready -U $(POSTGRESQL_USER) -d {{ .Values.postgresql.database }}
+            - pg_isready -U $POSTGRESQL_USER -d {{ .Values.postgresql.database }}
           initialDelaySeconds: 30
           periodSeconds: 10
         securityContext:

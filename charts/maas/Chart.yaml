@@ -1,8 +1,8 @@
 apiVersion: v2
 name: maas
-description: Models as a Service (MaaS) for xKS — API gateway authentication, authorization, rate limiting, and model subscription management
-version: 0.1.0
-appVersion: "0.0.2"
+description: Models as a Service (MaaS) for xKS — API key management, gateway routing (RHOAI 3.3 compatible, no controller)
+version: 0.2.0-rhoai33
+appVersion: "3.3"
 type: application
 keywords:
   - maas

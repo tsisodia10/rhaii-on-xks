@@ -2,18 +2,20 @@
 
 namespace: opendatahub
 
-# Pull secret for registry.redhat.io images (PostgreSQL)
-# When sharing namespace with KServe, set create: false to reuse the existing pull secret
+# Pull secret for registry.redhat.io images
+# dockerConfigJson is populated automatically by helmfile (from ~/.config/containers/auth.json)
+# Set create: false to reuse an existing pull secret (e.g., when sharing namespace with KServe)
 pullSecret:
   name: redhat-pull-secret
-  create: false
+  create: true
   dockerConfigJson: ""
 
-# MaaS API
+# MaaS API (RHOAI 3.3 productized image)
 maasApi:
   image:
-    repository: quay.io/opendatahub/maas-api
-    tag: latest
+    repository: registry.redhat.io/rhoai/odh-maas-api-rhel9
+    # v3.3.0 multi-arch (2026-02-18, commit 05c320d) — no human-readable tag published
+    tag: "sha256-0c9a170711fd9ae1ce7ae3563446b361a41ed06fc90d570e0096a8229f52de75"
     pullPolicy: Always
   replicas: 1
   resources:
@@ -27,22 +29,43 @@ maasApi:
   subscriptionNamespace: "models-as-a-service"
   apiKeyMaxExpirationDays: "30"
 
-# MaaS Controller
-maasController:
+# Identity provider for user authentication (replaces OpenShift kubernetesTokenReview on xKS)
+# Enable exactly ONE of keycloak or azureAD.
+
+# Keycloak — in-cluster OIDC provider
+keycloak:
+  enabled: false       # Use Keycloak JWT in AuthPolicy
+  deploy: true         # Deploy Keycloak as part of this chart (set false if using Azure AD or external Keycloak)
+  namespace: keycloak
   image:
-    repository: quay.io/opendatahub/maas-controller
-    tag: latest
-    pullPolicy: Always
-  replicas: 1
-  resources:
-    requests:
-      memory: "64Mi"
-      cpu: "10m"
-    limits:
-      memory: "512Mi"
-      cpu: "500m"
-  clusterAudience: "https://kubernetes.default.svc"
-  subscriptionNamespace: "models-as-a-service"
+    repository: quay.io/keycloak/keycloak
+    tag: "24.0"
+  adminUser: admin
+  adminPassword: admin
+  issuerUrl: ""        # Auto-computed when deploy=true; set manually for external Keycloak
+  clientId: maas-gateway
+  clientSecret: maas-gateway-secret
+  realm: maas
+  # Default groups (must match tierMapping.tiers[].groups)
+  groups:
+    - system:authenticated
+  # Demo user created on first startup (set to {} to skip)
+  demoUser:
+    username: demo-user
+    password: demo-password
+    email: demo@example.com
+    firstName: Demo
+    lastName: User
+    groups:
+      - system:authenticated
+
+# Azure AD — requires App Registration with "Expose an API" configured
+# See docs/azure-ad-identity-provider.md for prerequisites
+azureAD:
+  enabled: false
+  tenantId: ""       # Azure AD tenant ID
+  clientId: ""       # App Registration client ID
+  adminGroup: ""     # Azure AD group for admin access (group object ID or name)
 
 # Gateway configuration (adapted for Istio on xKS)
 gateway:
@@ -81,28 +104,23 @@ postgresql:
       memory: "512Mi"
       cpu: "500m"
 
-# Azure AD integration (optional)
-# Adds OIDC authentication at the gateway level via Kuadrant AuthPolicy
-azureAD:
-  enabled: false
-  tenantId: ""       # Azure AD tenant ID (e.g., "12345678-abcd-efgh-ijkl-123456789012")
-  clientId: ""       # App Registration client ID
-  # Admin group for maas-api access control (Azure AD group object ID)
-  # Only members of this group can create subscriptions and API keys
-  adminGroup: ""     # e.g., "maas-admins" or a group object ID
-
-# Tier mapping for rate limiting
+# Tier-to-group mapping (must match upstream format — groups field is required)
 tierMapping:
   tiers: |
     - name: free
-      maxTokens: 100
-      maxRequests: 10
-      period: 1m
-    - name: standard
-      maxTokens: 1000
-      maxRequests: 100
-      period: 1m
+      displayName: Free Tier
+      level: 0
+      groups:
+        - tier-free-users
+        - system:authenticated
     - name: premium
-      maxTokens: 10000
-      maxRequests: 1000
-      period: 1m
+      displayName: Premium Tier
+      level: 1
+      groups:
+        - tier-premium-users
+    - name: enterprise
+      displayName: Enterprise Tier
+      level: 2
+      groups:
+        - tier-enterprise-users
+        - admin-group

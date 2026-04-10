@@ -1,0 +1,70 @@
+{{- if .Values.keycloak.deploy }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: {{ include "maas.keycloak.namespace" . }}
+  labels:
+    {{- include "maas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+    app: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+        {{- include "maas.labels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: keycloak
+        image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
+        args:
+          - start-dev
+          - --import-realm
+        env:
+        - name: KEYCLOAK_ADMIN
+          value: {{ .Values.keycloak.adminUser | quote }}
+        - name: KEYCLOAK_ADMIN_PASSWORD
+          value: {{ .Values.keycloak.adminPassword | quote }}
+        - name: KC_HEALTH_ENABLED
+          value: "true"
+        - name: KC_HTTP_PORT
+          value: "8080"
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: realm-import
+          mountPath: /opt/keycloak/data/import
+          readOnly: true
+      volumes:
+      - name: realm-import
+        configMap:
+          name: keycloak-realm-import
+{{- end }}

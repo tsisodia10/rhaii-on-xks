@@ -20,6 +20,8 @@ spec:
         {{- include "maas.labels" . | nindent 8 }}
     spec:
       serviceAccountName: maas-api
+      imagePullSecrets:
+      - name: {{ .Values.pullSecret.name }}
       securityContext:
         runAsNonRoot: true
       terminationGracePeriodSeconds: 30
@@ -27,6 +29,8 @@ spec:
       - name: maas-api
         image: "{{ .Values.maasApi.image.repository }}:{{ .Values.maasApi.image.tag }}"
         imagePullPolicy: {{ .Values.maasApi.image.pullPolicy }}
+        command: ["./maas-api"]
+        args: ["--storage=external"]
         ports:
         - containerPort: 8080
           name: http

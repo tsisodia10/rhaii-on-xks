@@ -119,7 +119,6 @@ deploy-maas: check-kubeconfig clear-cache
 undeploy-maas: check-kubeconfig
 	@echo "=== Removing MaaS ==="
 	-helmfile destroy --selector name=maas --state-values-set maas.enabled=true
-	-kubectl delete crd maassubscriptions.maas.opendatahub.io maasmodelrefs.maas.opendatahub.io maasauthpolicies.maas.opendatahub.io externalmodels.maas.opendatahub.io --ignore-not-found 2>/dev/null || true
 	@echo "=== MaaS removed ==="
 
 deploy-opendatahub-prerequisites: check-kubeconfig

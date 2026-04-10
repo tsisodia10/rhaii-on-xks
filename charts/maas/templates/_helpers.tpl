@@ -14,3 +14,15 @@ app.kubernetes.io/managed-by: helm
 {{- define "maas.gateway.name" -}}
 {{ .Values.gateway.name | default "maas-default-gateway" }}
 {{- end }}
+
+{{- define "maas.keycloak.namespace" -}}
+{{ .Values.keycloak.namespace | default "keycloak" }}
+{{- end }}
+
+{{- define "maas.keycloak.issuerUrl" -}}
+{{- if .Values.keycloak.issuerUrl -}}
+{{ .Values.keycloak.issuerUrl }}
+{{- else -}}
+http://keycloak.{{ include "maas.keycloak.namespace" . }}.svc.cluster.local:8080/realms/{{ .Values.keycloak.realm | default "maas" }}
+{{- end -}}
+{{- end }}

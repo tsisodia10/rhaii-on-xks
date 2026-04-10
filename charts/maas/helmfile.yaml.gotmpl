@@ -1,4 +1,5 @@
-# MaaS (Models as a Service) - API gateway, auth, rate limiting, subscriptions
+# MaaS (Models as a Service) - RHOAI 3.3 compatible
+# API key management + gateway routing (no maas-controller, no CRDs)
 #
 # Prerequisites:
 #   - KServe deployed (LLMInferenceService CRDs)
@@ -31,38 +32,26 @@ releases:
           - "-c"
           - |
             set -e
-            echo "=== MaaS Pre-deploy checks ==="
+            echo "=== MaaS Pre-deploy checks (3.3 compatible) ==="
 
-            # Verify KServe is deployed
-            if ! kubectl get crd llminferenceservices.serving.kserve.io >/dev/null 2>&1; then
-              echo "ERROR: KServe CRDs not found. Deploy KServe first."
-              exit 1
-            fi
-
-            # Verify RHCL/Kuadrant is deployed
-            if ! kubectl get crd authpolicies.kuadrant.io >/dev/null 2>&1; then
-              echo "ERROR: Kuadrant/RHCL CRDs not found. Deploy RHCL first (make deploy-rhcl)."
-              exit 1
-            fi
-
-            # Verify Gateway API CRDs
             if ! kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1; then
               echo "ERROR: Gateway API CRDs not found. Deploy Istio/Sail first."
               exit 1
             fi
 
-            # Verify Kuadrant instance exists and is ready
+            if ! kubectl get crd authpolicies.kuadrant.io >/dev/null 2>&1; then
+              echo "ERROR: Kuadrant/RHCL CRDs not found. Deploy RHCL first (make deploy-rhcl)."
+              exit 1
+            fi
+
             KUADRANT_COUNT=$(kubectl get kuadrant -n kuadrant-system --no-headers 2>/dev/null | wc -l | tr -d ' ')
             if [ "$KUADRANT_COUNT" -gt 0 ]; then
               echo "Kuadrant instance found in kuadrant-system"
             else
-              echo "ERROR: No Kuadrant instance found in kuadrant-system. Auth and rate limiting policies will not be enforced."
+              echo "ERROR: No Kuadrant instance found in kuadrant-system."
               exit 1
             fi
 
-            # Apply MaaS CRDs via server-side apply (avoids size limits)
-            echo "Applying MaaS CRDs..."
-            kubectl apply -f ./crds/ --server-side
             echo "=== MaaS pre-deploy checks passed ==="
 
       - events: ["postsync"]
@@ -73,21 +62,16 @@ releases:
           - |
             set -e
             NAMESPACE="{{ .Values.namespace | default "opendatahub" }}"
-            echo "=== MaaS Post-deploy validation ==="
-
             ERRORS=0
 
             echo "Waiting for PostgreSQL..."
             kubectl rollout status deployment/postgres -n "$NAMESPACE" --timeout=120s 2>/dev/null || { echo "ERROR: PostgreSQL not ready"; ERRORS=$((ERRORS+1)); }
 
-            echo "Waiting for maas-controller..."
-            kubectl rollout status deployment/maas-controller -n "$NAMESPACE" --timeout=120s 2>/dev/null || { echo "ERROR: maas-controller not ready"; ERRORS=$((ERRORS+1)); }
-
             echo "Waiting for maas-api..."
             kubectl rollout status deployment/maas-api -n "$NAMESPACE" --timeout=120s 2>/dev/null || { echo "ERROR: maas-api not ready"; ERRORS=$((ERRORS+1)); }
 
             GATEWAY_NS="{{ .Values.gatewayNamespace | default "istio-system" }}"
-            GATEWAY_NAME="{{ .Values.gateway.name | default "maas-default-gateway" }}"
+            GATEWAY_NAME="{{ .Values.gatewayName | default "maas-default-gateway" }}"
             echo "Checking MaaS gateway..."
             kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NS" 2>/dev/null || echo "Gateway not found in $GATEWAY_NS"
 
@@ -110,11 +94,11 @@ releases:
             fi
 
             echo ""
-            echo "=== MaaS deployment status ==="
-            echo "maas-controller:"
-            kubectl get pods -n "$NAMESPACE" -l control-plane=maas-controller 2>/dev/null || echo "  Not found"
+            echo "=== MaaS deployment status (3.3 — no controller) ==="
             echo "maas-api:"
             kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/name=maas-api 2>/dev/null || echo "  Not found"
             echo "postgresql:"
             kubectl get pods -n "$NAMESPACE" -l app=postgres 2>/dev/null || echo "  Not found"
+            echo ""
+            echo "NOTE: No maas-controller in RHOAI 3.3. Create Kuadrant policies manually."
             echo "=== MaaS post-deploy validation complete ==="
