@@ -1,11 +1,12 @@
 .PHONY: deploy deploy-all undeploy undeploy-kserve status help check-kubeconfig sync clear-cache
 .PHONY: deploy-cert-manager deploy-istio deploy-lws deploy-rhcl deploy-kserve deploy-opendatahub-prerequisites deploy-cert-manager-pki
-.PHONY: undeploy-rhcl test conformance deploy-mock-model clean-mock-model
+.PHONY: undeploy-rhcl deploy-maas undeploy-maas test conformance deploy-mock-model clean-mock-model lint
 
 HELMFILE_CACHE := $(HOME)/.cache/helmfile
 # Auto-detect KServe namespace: redhat-ods-applications (EA2) or opendatahub (EA1)
 KSERVE_NAMESPACE ?= $(shell kubectl get deployment llmisvc-controller-manager -n redhat-ods-applications -o name 2>/dev/null | grep -q . && echo redhat-ods-applications || echo opendatahub)
 RHCL ?= false
+MAAS ?= false
 
 check-kubeconfig:
 	@kubectl cluster-info >/dev/null 2>&1 || (echo "ERROR: Cannot connect to cluster. Check KUBECONFIG." && exit 1)
@@ -17,12 +18,15 @@ help:
 	@echo "  make deploy              - Deploy cert-manager + istio + lws"
 	@echo "  make deploy-all          - Deploy all (cert-manager + istio + lws + kserve)"
 	@echo "  make deploy-all RHCL=true - Deploy all including RHCL"
+	@echo "  make deploy-all RHCL=true MAAS=true - Deploy all including RHCL + MaaS"
 	@echo "  make deploy-rhcl         - Deploy RHCL standalone (API gateway, auth, rate limiting)"
+	@echo "  make deploy-maas         - Deploy MaaS (API gateway, auth, rate limiting, subscriptions)"
 	@echo "  make deploy-kserve       - Deploy KServe"
 	@echo ""
 	@echo "Undeploy:"
 	@echo "  make undeploy            - Remove all infrastructure"
 	@echo "  make undeploy-rhcl       - Remove RHCL"
+	@echo "  make undeploy-maas       - Remove MaaS"
 	@echo "  make undeploy-kserve     - Remove KServe"
 	@echo ""
 	@echo "Mock model (no GPU):"
@@ -31,6 +35,7 @@ help:
 	@echo ""
 	@echo "Other:"
 	@echo "  make status              - Show deployment status"
+	@echo "  make lint                - Run local lints (helm lint, yamllint, shellcheck)"
 	@echo "  make test                - Run ODH conformance tests"
 	@echo "  make sync                - Fetch latest from git repos"
 	@echo "  make clear-cache         - Clear helmfile git cache"
@@ -52,11 +57,30 @@ deploy: check-kubeconfig clear-cache
 	@$(MAKE) status
 
 RHCL_TARGET := $(if $(filter true,$(RHCL)),deploy-rhcl,)
+MAAS_TARGET := $(if $(filter true,$(MAAS)),deploy-maas,)
 
-deploy-all: check-kubeconfig deploy-cert-manager deploy-istio deploy-lws $(RHCL_TARGET) deploy-kserve
+# MaaS requires RHCL — fail early if MAAS=true without RHCL=true
+$(if $(and $(filter true,$(MAAS)),$(filter-out true,$(RHCL))),$(error MAAS=true requires RHCL=true. Run: make deploy-all RHCL=true MAAS=true))
+
+deploy-all: check-kubeconfig deploy-cert-manager deploy-istio deploy-lws $(RHCL_TARGET) deploy-kserve $(MAAS_TARGET)
 	@$(MAKE) status
 
 deploy-cert-manager: check-kubeconfig clear-cache
+	@# Detect orphaned cert-manager pods not managed by our Helm release
+	@if kubectl get pods -n cert-manager --no-headers 2>/dev/null | grep -q .; then \
+		if ! helm list -n cert-manager-operator 2>/dev/null | grep -q cert-manager; then \
+			echo "WARNING: cert-manager pods exist in cert-manager namespace but no Helm release found in cert-manager-operator namespace."; \
+			echo "  If this is managed by another tool (OLM, GitOps), skip cleanup with: CERT_MANAGER_FORCE_CLEANUP=false"; \
+			if [ "$${CERT_MANAGER_FORCE_CLEANUP:-true}" = "true" ]; then \
+				echo "  Cleaning orphaned resources..."; \
+				kubectl delete deployment --all -n cert-manager --ignore-not-found 2>/dev/null || true; \
+				kubectl delete sa --all -n cert-manager --ignore-not-found 2>/dev/null || true; \
+				echo "  Done. Proceeding with fresh deploy."; \
+			else \
+				echo "  Skipping cleanup (CERT_MANAGER_FORCE_CLEANUP=false)."; \
+			fi; \
+		fi; \
+	fi
 	helmfile apply --selector name=cert-manager-operator
 
 deploy-istio: check-kubeconfig clear-cache
@@ -79,6 +103,23 @@ undeploy-rhcl: check-kubeconfig
 	@echo "=== Removing RHCL ==="
 	-helmfile destroy --selector name=rhcl --state-values-set rhclOperator.enabled=true
 	@echo "=== RHCL removed ==="
+
+deploy-maas: check-kubeconfig clear-cache
+	@echo "=== Deploying MaaS (Models as a Service) ==="
+	@echo "Prerequisites: KServe, RHCL, Istio, and cert-manager must be deployed first"
+	@kubectl get crd llminferenceservices.serving.kserve.io >/dev/null 2>&1 || \
+		(echo "ERROR: KServe not found. Run 'make deploy-kserve' first." && exit 1)
+	@kubectl get crd authpolicies.kuadrant.io >/dev/null 2>&1 || \
+		(echo "ERROR: Kuadrant/RHCL not found. Run 'make deploy-rhcl' first." && exit 1)
+	@kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1 || \
+		(echo "ERROR: Gateway API CRDs not found. Run 'make deploy-istio' first." && exit 1)
+	helmfile apply --selector name=maas --state-values-set maas.enabled=true
+	@echo "=== MaaS deployed ==="
+
+undeploy-maas: check-kubeconfig
+	@echo "=== Removing MaaS ==="
+	-helmfile destroy --selector name=maas --state-values-set maas.enabled=true
+	@echo "=== MaaS removed ==="
 
 deploy-opendatahub-prerequisites: check-kubeconfig
 	@echo "=== Deploying OpenDataHub prerequisites ==="
@@ -115,8 +156,11 @@ deploy-kserve: check-kubeconfig deploy-cert-manager-pki
 	helmfile sync --wait --selector name=kserve-rhaii-xks --skip-crds
 	@echo "=== KServe deployed ==="
 
-# Undeploy
-undeploy: check-kubeconfig undeploy-kserve
+# Undeploy (reverse dependency order: MaaS → KServe → RHCL → base infra)
+undeploy: check-kubeconfig
+	-@$(MAKE) undeploy-maas 2>/dev/null || true
+	-@$(MAKE) undeploy-kserve 2>/dev/null || true
+	-@$(MAKE) undeploy-rhcl 2>/dev/null || true
 	@./scripts/cleanup.sh -y
 
 undeploy-kserve: check-kubeconfig
@@ -155,6 +199,15 @@ status: check-kubeconfig
 		echo ""; \
 		echo "rhcl instances:"; \
 		kubectl get kuadrant,authorino,limitador -n kuadrant-system 2>/dev/null || echo "  No instances"; \
+	fi
+	@echo ""
+	@echo "maas (optional):"
+	@kubectl get pods -n "$(KSERVE_NAMESPACE)" -l control-plane=maas-controller 2>/dev/null || echo "  Not deployed (optional component)"
+	@kubectl get pods -n "$(KSERVE_NAMESPACE)" -l app.kubernetes.io/name=maas-api 2>/dev/null || echo "  "
+	@if kubectl get crd maassubscriptions.maas.opendatahub.io >/dev/null 2>&1; then \
+		echo ""; \
+		echo "maas gateway:"; \
+		kubectl get gateway maas-default-gateway -n istio-system 2>/dev/null || echo "  No gateway"; \
 	fi
 	@echo ""
 	@echo "kserve:"
@@ -225,3 +278,31 @@ clean-mock-model: check-kubeconfig
 	-kubectl delete clusterstoragecontainer local-noop --ignore-not-found 2>/dev/null || true
 	-kubectl delete namespace "$(MOCK_NAMESPACE)" --ignore-not-found
 	@echo "=== Done ==="
+
+# Lint — run locally before pushing to catch issues CodeRabbit would flag
+lint:
+	@echo "=== Running local lints ==="
+	@FAIL=0; \
+	echo "--- helm lint ---"; \
+	for chart in charts/*/; do \
+		if [ -f "$$chart/Chart.yaml" ]; then \
+			helm lint "$$chart" 2>&1 || FAIL=1; \
+		fi; \
+	done; \
+	echo ""; \
+	echo "--- yamllint ---"; \
+	if command -v yamllint >/dev/null 2>&1; then \
+		yamllint -d '{extends: relaxed, rules: {line-length: {max: 200}}}' values.yaml charts/*/values.yaml 2>&1 || FAIL=1; \
+	else \
+		echo "  yamllint not found (brew install yamllint)"; \
+	fi; \
+	echo ""; \
+	echo "--- shellcheck ---"; \
+	if command -v shellcheck >/dev/null 2>&1; then \
+		shellcheck -x scripts/*.sh test/*.sh 2>&1 || FAIL=1; \
+	else \
+		echo "  shellcheck not found (brew install shellcheck)"; \
+	fi; \
+	echo ""; \
+	echo "=== Lint complete ==="; \
+	exit $$FAIL

@@ -1,0 +1,76 @@
+{{- if .Values.keycloak.deploy }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm-import
+  namespace: {{ include "maas.keycloak.namespace" . }}
+  labels:
+    {{- include "maas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+data:
+  maas-realm.json: |
+    {
+      "realm": {{ .Values.keycloak.realm | default "maas" | quote }},
+      "enabled": true,
+      "registrationAllowed": false,
+      "loginWithEmailAllowed": true,
+      "duplicateEmailsAllowed": false,
+      "sslRequired": "none",
+      "clients": [
+        {
+          "clientId": {{ .Values.keycloak.clientId | quote }},
+          "enabled": true,
+          "directAccessGrantsEnabled": true,
+          "serviceAccountsEnabled": true,
+          "publicClient": false,
+          "secret": {{ .Values.keycloak.clientSecret | quote }},
+          "redirectUris": ["*"],
+          "webOrigins": ["*"],
+          "protocolMappers": [
+            {
+              "name": "groups",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-group-membership-mapper",
+              "consentRequired": false,
+              "config": {
+                "claim.name": "groups",
+                "full.path": "false",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "userinfo.token.claim": "true"
+              }
+            }
+          ]
+        }
+      ],
+      "groups": [
+        {{- $groups := .Values.keycloak.groups | default (list "system:authenticated") }}
+        {{- range $i, $g := $groups }}
+        {{- if $i }},{{ end }}
+        { "name": {{ $g | quote }} }
+        {{- end }}
+      ],
+      "users": [
+        {{- if .Values.keycloak.demoUser }}
+        {{- with .Values.keycloak.demoUser }}
+        {
+          "username": {{ .username | quote }},
+          "enabled": true,
+          "emailVerified": true,
+          "email": {{ .email | default "" | quote }},
+          "firstName": {{ .firstName | default "" | quote }},
+          "lastName": {{ .lastName | default "" | quote }},
+          "credentials": [
+            {
+              "type": "password",
+              "value": {{ .password | quote }},
+              "temporary": false
+            }
+          ],
+          "groups": {{ .groups | default (list "system:authenticated") | toJson }}
+        }
+        {{- end }}
+        {{- end }}
+      ]
+    }
+{{- end }}

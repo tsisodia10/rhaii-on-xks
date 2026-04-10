@@ -1,0 +1,19 @@
+{{- if .Values.keycloak.deploy }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: {{ include "maas.keycloak.namespace" . }}
+  labels:
+    {{- include "maas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+    app: keycloak
+spec:
+  selector:
+    app: keycloak
+  ports:
+  - port: 8080
+    targetPort: http
+    protocol: TCP
+    name: http
+{{- end }}

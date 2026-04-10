@@ -1,0 +1,104 @@
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: maas-api-auth-policy
+  namespace: {{ include "maas.namespace" . }}
+  labels:
+    {{- include "maas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-auth
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: maas-api-route
+  rules:
+    authentication:
+      api-keys:
+        when:
+          - predicate: request.headers.authorization.startsWith("Bearer sk-oai-")
+        plain:
+          selector: request.headers.authorization
+        priority: 0
+{{- if or .Values.keycloak.enabled .Values.keycloak.deploy }}
+      keycloak-jwt:
+        jwt:
+          issuerUrl: {{ include "maas.keycloak.issuerUrl" . }}
+        priority: 1
+{{- else if .Values.azureAD.enabled }}
+      azure-ad:
+        jwt:
+          issuerUrl: https://login.microsoftonline.com/{{ .Values.azureAD.tenantId }}/v2.0
+        priority: 1
+{{- end }}
+    metadata:
+      apiKeyValidation:
+        when:
+          - predicate: request.headers.authorization.startsWith("Bearer sk-oai-")
+        http:
+          url: http://maas-api.{{ include "maas.namespace" . }}.svc.cluster.local:8080/internal/v1/api-keys/validate
+          method: POST
+          contentType: application/json
+          body:
+            expression: '{"key": request.headers.authorization.replace("Bearer ", "")}'
+        priority: 0
+    authorization:
+      api-key-valid:
+        when:
+          - predicate: request.headers.authorization.startsWith("Bearer sk-oai-")
+        patternMatching:
+          patterns:
+            - selector: auth.metadata.apiKeyValidation.valid
+              operator: eq
+              value: "true"
+        priority: 0
+{{- if or .Values.keycloak.enabled .Values.keycloak.deploy }}
+      audience-check:
+        patternMatching:
+          patterns:
+            - selector: auth.identity.azp
+              operator: eq
+              value: {{ .Values.keycloak.clientId | quote }}
+{{- else if .Values.azureAD.enabled }}
+      audience-check:
+        patternMatching:
+          patterns:
+            - selector: auth.identity.aud
+              operator: eq
+              value: {{ .Values.azureAD.clientId | quote }}
+{{- end }}
+    response:
+      success:
+        headers:
+          X-MaaS-Username:
+            when:
+              - predicate: request.headers.authorization.startsWith("Bearer sk-oai-")
+            plain:
+              selector: auth.metadata.apiKeyValidation.username
+            priority: 0
+          X-MaaS-Username-IDP:
+            when:
+              - predicate: '!request.headers.authorization.startsWith("Bearer sk-oai-")'
+            plain:
+              selector: auth.identity.preferred_username
+            key: X-MaaS-Username
+            priority: 1
+          X-MaaS-Group:
+            when:
+              - predicate: request.headers.authorization.startsWith("Bearer sk-oai-")
+            plain:
+              expression: '''["'' + auth.metadata.apiKeyValidation.groups.join(''","'') + ''"]'''
+            priority: 0
+          X-MaaS-Group-IDP:
+            when:
+              - predicate: '!request.headers.authorization.startsWith("Bearer sk-oai-")'
+            plain:
+              selector: auth.identity.groups.@tostr
+            key: X-MaaS-Group
+            priority: 1
+          X-MaaS-Subscription:
+            when:
+              - predicate: request.headers.authorization.startsWith("Bearer sk-oai-")
+              - predicate: auth.metadata.apiKeyValidation.subscription != ""
+            plain:
+              selector: auth.metadata.apiKeyValidation.subscription
+            priority: 0

@@ -1,0 +1,104 @@
+# MaaS (Models as a Service) - RHOAI 3.3 compatible
+# API key management + gateway routing (no maas-controller, no CRDs)
+#
+# Prerequisites:
+#   - KServe deployed (LLMInferenceService CRDs)
+#   - RHCL deployed (Kuadrant, Authorino, Limitador operators + instances)
+#   - Istio/Sail deployed (Gateway API)
+#   - cert-manager deployed (TLS)
+#
+# Usage:
+#   helmfile apply --selector name=maas
+
+releases:
+  - name: maas
+    chart: ./
+    namespace: {{ .Values.namespace | default "opendatahub" }}
+    createNamespace: true
+    wait: false
+    set:
+{{- if .Values.useSystemPodmanAuth }}
+      - name: pullSecret.dockerConfigJson
+        file: {{ env "HOME" }}/.config/containers/auth.json
+{{- else if .Values.pullSecretFile }}
+      - name: pullSecret.dockerConfigJson
+        file: {{ .Values.pullSecretFile }}
+{{- end }}
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: "sh"
+        args:
+          - "-c"
+          - |
+            set -e
+            echo "=== MaaS Pre-deploy checks (3.3 compatible) ==="
+
+            if ! kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1; then
+              echo "ERROR: Gateway API CRDs not found. Deploy Istio/Sail first."
+              exit 1
+            fi
+
+            if ! kubectl get crd authpolicies.kuadrant.io >/dev/null 2>&1; then
+              echo "ERROR: Kuadrant/RHCL CRDs not found. Deploy RHCL first (make deploy-rhcl)."
+              exit 1
+            fi
+
+            KUADRANT_COUNT=$(kubectl get kuadrant -n kuadrant-system --no-headers 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$KUADRANT_COUNT" -gt 0 ]; then
+              echo "Kuadrant instance found in kuadrant-system"
+            else
+              echo "ERROR: No Kuadrant instance found in kuadrant-system."
+              exit 1
+            fi
+
+            echo "=== MaaS pre-deploy checks passed ==="
+
+      - events: ["postsync"]
+        showlogs: true
+        command: "sh"
+        args:
+          - "-c"
+          - |
+            set -e
+            NAMESPACE="{{ .Values.namespace | default "opendatahub" }}"
+            ERRORS=0
+
+            echo "Waiting for PostgreSQL..."
+            kubectl rollout status deployment/postgres -n "$NAMESPACE" --timeout=120s 2>/dev/null || { echo "ERROR: PostgreSQL not ready"; ERRORS=$((ERRORS+1)); }
+
+            echo "Waiting for maas-api..."
+            kubectl rollout status deployment/maas-api -n "$NAMESPACE" --timeout=120s 2>/dev/null || { echo "ERROR: maas-api not ready"; ERRORS=$((ERRORS+1)); }
+
+            GATEWAY_NS="{{ .Values.gatewayNamespace | default "istio-system" }}"
+            GATEWAY_NAME="{{ .Values.gatewayName | default "maas-default-gateway" }}"
+            echo "Checking MaaS gateway..."
+            kubectl get gateway "$GATEWAY_NAME" -n "$GATEWAY_NS" 2>/dev/null || echo "Gateway not found in $GATEWAY_NS"
+
+            GATEWAY_SA="${GATEWAY_NAME}-istio"
+            echo "Patching gateway service account with pull secret..."
+            for i in 1 2 3 4 5; do
+              if kubectl get sa "$GATEWAY_SA" -n "$GATEWAY_NS" >/dev/null 2>&1; then
+                kubectl patch sa "$GATEWAY_SA" -n "$GATEWAY_NS" \
+                  -p '{"imagePullSecrets": [{"name": "redhat-pull-secret"}]}' 2>/dev/null && \
+                  echo "  Gateway SA patched" && break
+              fi
+              echo "  Waiting for gateway SA... ($i/5)"
+              sleep 5
+            done
+            kubectl delete pod -n "$GATEWAY_NS" -l "istio.io/gateway-name=$GATEWAY_NAME" --ignore-not-found 2>/dev/null || true
+
+            if [ "$ERRORS" -gt 0 ]; then
+              echo "ERROR: $ERRORS component(s) not ready. Check pod status."
+              exit 1
+            fi
+
+            echo ""
+            echo "=== MaaS deployment status (3.3 — no controller) ==="
+            echo "maas-api:"
+            kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/name=maas-api 2>/dev/null || echo "  Not found"
+            echo "postgresql:"
+            kubectl get pods -n "$NAMESPACE" -l app=postgres 2>/dev/null || echo "  Not found"
+            echo ""
+            echo "NOTE: No maas-controller in RHOAI 3.3. Create Kuadrant policies manually."
+            echo "=== MaaS post-deploy validation complete ==="

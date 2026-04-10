@@ -1,0 +1,11 @@
+{{- if .Values.keycloak.deploy }}
+{{- if not (lookup "v1" "Namespace" "" (include "maas.keycloak.namespace" .)) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "maas.keycloak.namespace" . }}
+  labels:
+    {{- include "maas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+{{- end }}
+{{- end }}
