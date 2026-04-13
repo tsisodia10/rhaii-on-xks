@@ -1,0 +1,49 @@
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: maas-api-auth
+  namespace: {{ include "maas.namespace" . }}
+  labels:
+    {{- include "maas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-auth
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: maas-api-route
+  rules:
+    authentication:
+      api-key:
+        credentials:
+          authorizationHeader:
+            prefix: Bearer
+        plain:
+          selector: auth.identity
+        callbacks:
+          validate:
+            url: http://maas-api.{{ include "maas.namespace" . }}.svc.cluster.local:8080/internal/v1/api-keys/validate
+            method: POST
+            body:
+              - name: api_key
+                selector: auth.identity
+            credentials:
+              authorizationHeader:
+                prefix: Bearer
+{{- if .Values.azureAD.enabled }}
+      azure-ad:
+        jwt:
+          issuerUrl: https://login.microsoftonline.com/{{ .Values.azureAD.tenantId }}/v2.0
+          audiences:
+            - {{ .Values.azureAD.clientId }}
+{{- end }}
+    response:
+      success:
+        headers:
+          x-maas-username:
+            plain:
+              value: "true"
+              selector: auth.identity.preferred_username
+          x-maas-group:
+            plain:
+              value: "true"
+              selector: auth.identity.groups
